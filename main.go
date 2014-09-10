@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"strconv"
+	"sync"
 	"github.com/fsouza/go-dockerclient"
 )
 
@@ -47,11 +48,15 @@ func proxyConn(conn net.Conn, addr string) {
 
 func findBackend(conn net.Conn, destPort int) string {
 	ip, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
-	name,_ := inspectBackendName(ip, strconv.Itoa(destPort))
+	name,err := inspectBackendName(ip, strconv.Itoa(destPort))
+	if err != nil {
+		log.Println("findBackend:", err)
+	}
 	return lookupSRV(name)
 }
 
 func lookupSRV(name string) string {
+	log.Printf("lookupSRV: name=%s", name)
 	_, addrs, err := net.LookupSRV("", "", name)
 	if err != nil {
 		log.Println("dns:", err)
@@ -65,7 +70,8 @@ func lookupSRV(name string) string {
 }
 
 func inspectBackendName(sourceIP, destPort string) (string, error) {
-	envKey := "BACKEND_" + destPort
+	log.Printf("inspecting ip=%s port=%s", sourceIP, destPort)
+	envKey := "BACKENDS_" + destPort
 
 	client, _ := docker.NewClient(getopt("DOCKER_HOST", "unix:///var/run/docker.sock"))
 
@@ -93,11 +99,15 @@ func inspectBackendName(sourceIP, destPort string) (string, error) {
 
 func main() {
 	flag.Parse()
-	portRange := strings.Split(getopt("PORT_RANGE", "7000:7100"), ":")
+	portRange := strings.Split(getopt("PORT_RANGE", "10000:10100"), ":")
 	pStart,_ := strconv.Atoi(portRange[0])
 	pEnd,_   := strconv.Atoi(portRange[1])
+	log.Printf("Listening on ports from %d through %d", pStart, pEnd)
+	var wg sync.WaitGroup
+	wg.Add(pEnd - pStart + 1)
 	for i := pStart; i <= pEnd; i++ {
 		go func(port int) {
+			defer wg.Done()
 			listener, err := net.Listen("tcp", ":"+strconv.Itoa(port))
 			assert(err)
 			for {
@@ -117,4 +127,6 @@ func main() {
 			}
 		}(i)
 	}
+
+	wg.Wait()
 }
