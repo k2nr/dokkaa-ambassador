@@ -1,16 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
-	"github.com/coreos/go-etcd/etcd"
 	"github.com/fsouza/go-dockerclient"
 	"io"
 	"log"
 	"net"
 	"os"
-	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,101 +102,6 @@ func inspectBackendName(sourceIP, destPort string) (string, error) {
 	return "", errors.New("unable to find container with source IP")
 }
 
-type service struct {
-	Name     string
-	App      string
-	Port     string
-	HostPort string
-}
-
-type Announcement struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port,omitempty"`
-	Priority int    `json:"priority,omitempty"`
-	Weight   int    `json:"weight,omitempty"`
-	TTL      int    `json:"ttl,omitempty"`
-}
-
-func srvDomains(container *docker.Container) ([]*service, error) {
-	serviceMap := map[string]string{}
-	var appName string
-	log.Println(container.HostConfig.PortBindings)
-	for _, e := range container.Config.Env {
-		parts := strings.SplitN(e, "=", 2)
-		switch parts[0] {
-		case "DOKKAA_APP_NAME":
-			appName = parts[1]
-		}
-		if strings.HasPrefix(parts[0], "DOKKAA_SERVICE_") {
-			name := strings.TrimPrefix(parts[0], "DOKKAA_SERVICE_")
-			name = strings.ToLower(name)
-			serviceMap[name] = parts[1]
-		}
-	}
-	log.Println(serviceMap)
-
-	var services []*service
-	for name, port := range serviceMap {
-		hostPort := container.HostConfig.PortBindings[docker.Port(port+"/tcp")][0].HostPort
-		hostPort = strings.TrimSuffix(hostPort, "/tcp")
-		hostPort = strings.TrimSuffix(hostPort, "/udp")
-		service := &service{
-			App:      appName,
-			Name:     name,
-			Port:     port,
-			HostPort: hostPort,
-		}
-		services = append(services, service)
-	}
-
-	return services, nil
-}
-
-func registerService(container *docker.Container) error {
-	services, err := srvDomains(container)
-	if err != nil {
-		log.Println("can't inspect services: ", err)
-		return err
-	}
-	cli := etcd.NewClient(etcdMachines)
-	base := path.Join("/", "skydns", "local", "skydns")
-	for _, s := range services {
-		path := path.Join(base, s.App, s.Name)
-		port, _ := strconv.Atoi(s.HostPort)
-		ann := &Announcement{
-			Host: hostIP,
-			Port: port,
-		}
-		value, _ := json.Marshal(ann)
-		cli.Set(path, string(value), 0)
-	}
-	return nil
-}
-
-func deleteService(container *docker.Container) error {
-	return nil
-}
-
-func startDockerEventLoop() {
-	client, _ := docker.NewClient(getopt("DOCKER_HOST", "unix:///var/run/docker.sock"))
-	c := make(chan *docker.APIEvents)
-	client.AddEventListener(c)
-	for event := range c {
-		log.Println("event received: ", event)
-		container, err := client.InspectContainer(event.ID)
-		if err != nil {
-			log.Println("can't inspect container: ", err)
-			continue
-		}
-		switch event.Status {
-		case "start":
-			registerService(container)
-		case "die":
-			deleteService(container)
-		}
-	}
-}
-
 func main() {
 	flag.Parse()
 	hostIP = getopt("HOST_IP", "127.0.0.1")
@@ -231,8 +133,6 @@ func main() {
 			}
 		}(i)
 	}
-
-	go startDockerEventLoop()
 
 	wg.Wait()
 }
