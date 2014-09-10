@@ -1,26 +1,25 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
-	"path"
 	"flag"
+	"github.com/coreos/go-etcd/etcd"
+	"github.com/fsouza/go-dockerclient"
 	"io"
 	"log"
 	"net"
 	"os"
-	"strings"
+	"path"
 	"strconv"
+	"strings"
 	"sync"
-	"github.com/coreos/go-etcd/etcd"
-	"github.com/fsouza/go-dockerclient"
-	"encoding/json"
 )
 
 var (
-	hostIP string
+	hostIP       string
 	etcdMachines []string
 )
-
 
 func getopt(name, def string) string {
 	if env := os.Getenv(name); env != "" {
@@ -57,7 +56,7 @@ func proxyConn(conn net.Conn, addr string) {
 
 func findBackend(conn net.Conn, destPort int) string {
 	ip, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
-	name,err := inspectBackendName(ip, strconv.Itoa(destPort))
+	name, err := inspectBackendName(ip, strconv.Itoa(destPort))
 	if err != nil {
 		log.Println("findBackend:", err)
 	}
@@ -107,18 +106,18 @@ func inspectBackendName(sourceIP, destPort string) (string, error) {
 }
 
 type service struct {
-	Name string
-	App  string
-	Port string
+	Name     string
+	App      string
+	Port     string
 	HostPort string
 }
 
 type Announcement struct {
-	Host string  `json:"host"`
-	Port int     `json:"port,omitempty"`
-	Priority int `json:"priority,omitempty"`
-	Weight int   `json:"weight,omitempty"`
-	TTL  int     `json:"ttl,omitempty"`
+	Host     string `json:"host"`
+	Port     int    `json:"port,omitempty"`
+	Priority int    `json:"priority,omitempty"`
+	Weight   int    `json:"weight,omitempty"`
+	TTL      int    `json:"ttl,omitempty"`
 }
 
 func srvDomains(container *docker.Container) ([]*service, error) {
@@ -141,13 +140,13 @@ func srvDomains(container *docker.Container) ([]*service, error) {
 
 	var services []*service
 	for name, port := range serviceMap {
-		hostPort := container.HostConfig.PortBindings[docker.Port(port + "/tcp")][0].HostPort
+		hostPort := container.HostConfig.PortBindings[docker.Port(port+"/tcp")][0].HostPort
 		hostPort = strings.TrimSuffix(hostPort, "/tcp")
 		hostPort = strings.TrimSuffix(hostPort, "/udp")
 		service := &service{
-			App: appName,
-			Name: name,
-			Port: port,
+			App:      appName,
+			Name:     name,
+			Port:     port,
 			HostPort: hostPort,
 		}
 		services = append(services, service)
@@ -166,12 +165,12 @@ func registerService(container *docker.Container) error {
 	base := path.Join("/", "skydns", "local", "skydns")
 	for _, s := range services {
 		path := path.Join(base, s.App, s.Name)
-		port,_ := strconv.Atoi(s.HostPort)
+		port, _ := strconv.Atoi(s.HostPort)
 		ann := &Announcement{
 			Host: hostIP,
 			Port: port,
 		}
-		value,_ := json.Marshal(ann)
+		value, _ := json.Marshal(ann)
 		cli.Set(path, string(value), 0)
 	}
 	return nil
@@ -205,8 +204,8 @@ func main() {
 	flag.Parse()
 	hostIP = getopt("HOST_IP", "127.0.0.1")
 	portRange := strings.Split(getopt("PORT_RANGE", "10000:10100"), ":")
-	pStart,_ := strconv.Atoi(portRange[0])
-	pEnd,_   := strconv.Atoi(portRange[1])
+	pStart, _ := strconv.Atoi(portRange[0])
+	pEnd, _ := strconv.Atoi(portRange[1])
 	log.Printf("Listening on ports from %d through %d", pStart, pEnd)
 	var wg sync.WaitGroup
 	wg.Add(pEnd - pStart + 1)
